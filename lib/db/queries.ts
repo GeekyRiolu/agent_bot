@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 
 import {
   and,
@@ -48,6 +49,104 @@ export async function getUser(email: string): Promise<User[]> {
     throw new ChatSDKError(
       "bad_request:database",
       "Failed to get user by email"
+    );
+  }
+}
+
+function stableUuidFromString(value: string): string {
+  const hash = createHash("sha256").update(value).digest();
+  const bytes = Buffer.from(hash.subarray(0, 16));
+
+  // RFC 4122 variant + version bits.
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
+    16,
+    20
+  )}-${hex.slice(20)}`;
+}
+
+export async function getUserByFirebaseUid(firebaseUid: string): Promise<User[]> {
+  try {
+    return await db.select().from(user).where(eq(user.firebaseUid, firebaseUid));
+  } catch (_error) {
+    throw new ChatSDKError(
+      "bad_request:database",
+      "Failed to get user by Firebase UID"
+    );
+  }
+}
+
+export async function upsertUserFromFirebase({
+  firebaseUid,
+  email,
+}: {
+  firebaseUid: string;
+  email?: string;
+}) {
+  try {
+    const [existingByFirebaseUid] = await db
+      .select()
+      .from(user)
+      .where(eq(user.firebaseUid, firebaseUid))
+      .limit(1);
+
+    if (existingByFirebaseUid) {
+      return existingByFirebaseUid;
+    }
+
+    if (email) {
+      const [existingByEmail] = await db
+        .select()
+        .from(user)
+        .where(eq(user.email, email))
+        .limit(1);
+
+      if (existingByEmail) {
+        if (
+          existingByEmail.firebaseUid &&
+          existingByEmail.firebaseUid !== firebaseUid
+        ) {
+          throw new ChatSDKError(
+            "bad_request:database",
+            "Email is already associated with a different Firebase user"
+          );
+        }
+
+        const [updatedUser] = await db
+          .update(user)
+          .set({ firebaseUid })
+          .where(eq(user.id, existingByEmail.id))
+          .returning();
+
+        return updatedUser;
+      }
+    }
+
+    const deterministicUserId = stableUuidFromString(firebaseUid);
+    const safeEmail =
+      email ?? `firebase-${firebaseUid.slice(0, 16)}@local.invalid`;
+
+    const [createdUser] = await db
+      .insert(user)
+      .values({
+        id: deterministicUserId,
+        email: safeEmail,
+        firebaseUid,
+      })
+      .returning();
+
+    return createdUser;
+  } catch (error) {
+    if (error instanceof ChatSDKError) {
+      throw error;
+    }
+
+    throw new ChatSDKError(
+      "bad_request:database",
+      "Failed to upsert Firebase user"
     );
   }
 }

@@ -22,15 +22,46 @@ export async function generateTitleFromUserMessage({
 }: {
   message: UIMessage;
 }) {
-  const { text } = await generateText({
-    model: getTitleModel(),
-    system: titlePrompt,
-    prompt: getTextFromMessage(message),
-  });
-  return text
-    .replace(/^[#*"\s]+/, "")
-    .replace(/["]+$/, "")
-    .trim();
+  const prompt = getTextFromMessage(message);
+
+  const fallbackTitle = (() => {
+    const cleaned = prompt
+      .replace(/\s+/g, " ")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .trim();
+
+    if (!cleaned) {
+      return "New Conversation";
+    }
+
+    return cleaned
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 5)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  })();
+
+  if (process.env.RUST_API_URL || !process.env.AI_GATEWAY_API_KEY) {
+    return fallbackTitle;
+  }
+
+  try {
+    const { text } = await generateText({
+      model: getTitleModel(),
+      system: titlePrompt,
+      prompt,
+    });
+
+    const title = text
+      .replace(/^[#*"\s]+/, "")
+      .replace(/["]+$/, "")
+      .trim();
+
+    return title || fallbackTitle;
+  } catch (_) {
+    return fallbackTitle;
+  }
 }
 
 export async function deleteTrailingMessages({ id }: { id: string }) {

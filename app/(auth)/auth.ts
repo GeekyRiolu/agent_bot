@@ -2,8 +2,9 @@ import { compare } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
+import { verifyFirebaseIdToken } from "@/lib/auth/firebase";
 import { DUMMY_PASSWORD } from "@/lib/constants";
-import { createGuestUser, getUser } from "@/lib/db/queries";
+import { createGuestUser, getUser, upsertUserFromFirebase } from "@/lib/db/queries";
 import { authConfig } from "./auth.config";
 
 export type UserType = "guest" | "regular";
@@ -38,6 +39,27 @@ export const {
 } = NextAuth({
   ...authConfig,
   providers: [
+    Credentials({
+      id: "firebase",
+      credentials: {},
+      async authorize({ idToken }: any) {
+        if (typeof idToken !== "string" || idToken.length === 0) {
+          return null;
+        }
+
+        try {
+          const verifiedUser = await verifyFirebaseIdToken(idToken);
+          const dbUser = await upsertUserFromFirebase({
+            firebaseUid: verifiedUser.localId,
+            email: verifiedUser.email,
+          });
+
+          return { ...dbUser, type: "regular" };
+        } catch (_error) {
+          return null;
+        }
+      },
+    }),
     Credentials({
       credentials: {},
       async authorize({ email, password }: any) {

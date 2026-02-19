@@ -37,6 +37,25 @@ import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 60;
+const RUST_REQUEST_TIMEOUT_MS = 25_000;
+const RUST_MAX_ATTEMPTS = 2;
+
+type RustChatRequest = {
+  chat_id?: string;
+  tenant_id?: string;
+  user_id?: string;
+  messages: Array<{
+    role: string;
+    content: string;
+  }>;
+};
+
+type RustApiResponse = {
+  success: boolean;
+  data?: unknown;
+  error?: string | null;
+  timestamp?: string;
+};
 
 function getStreamContext() {
   try {
@@ -47,6 +66,138 @@ function getStreamContext() {
 }
 
 export { getStreamContext };
+
+function toRustChatMessages(messages: ChatMessage[]): RustChatRequest["messages"] {
+  const normalized = messages
+    .map((message) => {
+      const content = message.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("\n")
+        .trim();
+
+      return {
+        role: message.role,
+        content,
+      };
+    })
+    .filter((message) => message.content.length > 0);
+
+  // Keep request payload bounded for Cloud Run stability.
+  return normalized.slice(-24);
+}
+
+function extractRustAnswer(data: unknown): string {
+  if (typeof data === "string") {
+    return data;
+  }
+
+  if (data && typeof data === "object") {
+    const payload = data as Record<string, unknown>;
+
+    if (typeof payload.answer === "string") {
+      return payload.answer;
+    }
+
+    if (typeof payload.message === "string") {
+      return payload.message;
+    }
+
+    if (typeof payload.summary === "string") {
+      return payload.summary;
+    }
+
+    return JSON.stringify(payload, null, 2);
+  }
+
+  return "No response returned by Rust service.";
+}
+
+async function callRustChatService({
+  rustApiUrl,
+  messages,
+  chatId,
+  userId,
+}: {
+  rustApiUrl: string;
+  messages: ChatMessage[];
+  chatId: string;
+  userId: string;
+}): Promise<string> {
+  const rustMessages = toRustChatMessages(messages);
+
+  if (rustMessages.length === 0) {
+    throw new ChatSDKError(
+      "bad_request:api",
+      "No text messages available to send to Rust service."
+    );
+  }
+
+  const body = JSON.stringify({
+    chat_id: chatId,
+    tenant_id: process.env.RUST_TENANT_ID ?? "default",
+    user_id: userId,
+    messages: rustMessages,
+  } satisfies RustChatRequest);
+
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= RUST_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RUST_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${rustApiUrl.replace(/\/$/, "")}/api/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new ChatSDKError(
+          "bad_request:api",
+          `Rust service error (${response.status}): ${responseText}`
+        );
+      }
+
+      const payload = (await response.json()) as RustApiResponse;
+
+      if (!payload.success) {
+        throw new ChatSDKError(
+          "bad_request:api",
+          payload.error ?? "Rust service returned an error"
+        );
+      }
+
+      return extractRustAnswer(payload.data);
+    } catch (error) {
+      lastError = error;
+      if (attempt === RUST_MAX_ATTEMPTS) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  if (lastError instanceof Error && lastError.name === "AbortError") {
+    throw new ChatSDKError(
+      "offline:chat",
+      "Rust service timed out. Please retry."
+    );
+  }
+
+  if (lastError instanceof ChatSDKError) {
+    throw lastError;
+  }
+
+  throw new ChatSDKError("offline:chat", "Rust service request failed.");
+}
 
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
@@ -135,10 +286,49 @@ export async function POST(request: Request) {
       selectedChatModel.includes("thinking");
 
     const modelMessages = await convertToModelMessages(uiMessages);
+    const rustApiUrl = process.env.RUST_API_URL;
 
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
+        if (rustApiUrl) {
+          const textId = generateUUID();
+          dataStream.write({
+            type: "text-start",
+            id: textId,
+          });
+          dataStream.write({
+            type: "text-delta",
+            id: textId,
+            delta: "Working on it...\n\n",
+          });
+
+          const rustAnswer = await callRustChatService({
+            rustApiUrl,
+            messages: uiMessages,
+            chatId: id,
+            userId: session.user.id,
+          });
+
+          dataStream.write({
+            type: "text-delta",
+            id: textId,
+            delta: rustAnswer,
+          });
+          dataStream.write({
+            type: "text-end",
+            id: textId,
+          });
+
+          if (titlePromise) {
+            const title = await titlePromise;
+            dataStream.write({ type: "data-chat-title", data: title });
+            updateChatTitleById({ chatId: id, title });
+          }
+
+          return;
+        }
+
         const result = streamText({
           model: getLanguageModel(selectedChatModel),
           system: systemPrompt({ selectedChatModel, requestHints }),

@@ -1,8 +1,11 @@
 "use server";
 
 import { z } from "zod";
-
-import { createUser, getUser } from "@/lib/db/queries";
+import {
+  FirebaseAuthError,
+  signInWithEmailPassword,
+  signUpWithEmailPassword,
+} from "@/lib/auth/firebase";
 
 import { signIn } from "./auth";
 
@@ -25,9 +28,13 @@ export const login = async (
       password: formData.get("password"),
     });
 
-    await signIn("credentials", {
-      email: validatedData.email,
-      password: validatedData.password,
+    const firebaseSession = await signInWithEmailPassword(
+      validatedData.email,
+      validatedData.password
+    );
+
+    await signIn("firebase", {
+      idToken: firebaseSession.idToken,
       redirect: false,
     });
 
@@ -35,6 +42,10 @@ export const login = async (
   } catch (error) {
     if (error instanceof z.ZodError) {
       return { status: "invalid_data" };
+    }
+
+    if (error instanceof FirebaseAuthError) {
+      return { status: "failed" };
     }
 
     return { status: "failed" };
@@ -61,15 +72,13 @@ export const register = async (
       password: formData.get("password"),
     });
 
-    const [user] = await getUser(validatedData.email);
+    const firebaseSession = await signUpWithEmailPassword(
+      validatedData.email,
+      validatedData.password
+    );
 
-    if (user) {
-      return { status: "user_exists" } as RegisterActionState;
-    }
-    await createUser(validatedData.email, validatedData.password);
-    await signIn("credentials", {
-      email: validatedData.email,
-      password: validatedData.password,
+    await signIn("firebase", {
+      idToken: firebaseSession.idToken,
       redirect: false,
     });
 
@@ -77,6 +86,10 @@ export const register = async (
   } catch (error) {
     if (error instanceof z.ZodError) {
       return { status: "invalid_data" };
+    }
+
+    if (error instanceof FirebaseAuthError && error.code === "EMAIL_EXISTS") {
+      return { status: "user_exists" };
     }
 
     return { status: "failed" };
