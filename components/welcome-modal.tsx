@@ -1,54 +1,57 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { GoogleSignInButton } from "@/components/google-sign-in-button";
 import { SparklesIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
-import { guestRegex } from "@/lib/constants";
-
-const DISMISSED_KEY = "welcome-modal-dismissed";
 
 export function WelcomeModal() {
-  const { data: session, status } = useSession();
+  const { data: session, status, update: updateSession } = useSession();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [guestLoading, setGuestLoading] = useState(false);
 
   useEffect(() => {
     if (status === "loading") {
       return;
     }
 
-    const isGuest = guestRegex.test(session?.user?.email ?? "");
-
-    // User signed in (no longer a guest) → close immediately & remember
-    if (!isGuest) {
-      localStorage.setItem(DISMISSED_KEY, "true");
+    // If the user has any valid session (guest or regular), don't show the modal
+    if (session?.user) {
       setOpen(false);
       return;
     }
 
-    const dismissed = localStorage.getItem(DISMISSED_KEY);
-
-    if (isGuest && !dismissed) {
-      // Tiny delay so the page content renders first, then modal fades in
-      const timer = setTimeout(() => setOpen(true), 300);
-      return () => clearTimeout(timer);
-    }
+    // No session at all → show the modal after a short delay
+    const timer = setTimeout(() => setOpen(true), 200);
+    return () => clearTimeout(timer);
   }, [session, status]);
 
   if (!open) {
     return null;
   }
 
-  const handleDismiss = () => {
-    localStorage.setItem(DISMISSED_KEY, "true");
-    setOpen(false);
+  const handleGuest = async () => {
+    try {
+      setGuestLoading(true);
+
+      // Create a guest session on-demand
+      const result = await signIn("guest", { redirect: false });
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+
+      await updateSession();
+      router.refresh();
+    } catch (_error) {
+      setGuestLoading(false);
+    }
   };
 
   const handleSignIn = () => {
-    localStorage.setItem(DISMISSED_KEY, "true");
     router.push("/login");
   };
 
@@ -99,11 +102,12 @@ export function WelcomeModal() {
           {/* Guest Continue */}
           <Button
             className="w-full text-muted-foreground"
-            onClick={handleDismiss}
+            disabled={guestLoading}
+            onClick={handleGuest}
             type="button"
             variant="ghost"
           >
-            Continue as Guest
+            {guestLoading ? "Setting up..." : "Continue as Guest"}
           </Button>
         </div>
       </div>

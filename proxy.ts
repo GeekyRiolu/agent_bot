@@ -24,11 +24,17 @@ export async function proxy(request: NextRequest) {
   });
 
   if (!token) {
-    const redirectUrl = encodeURIComponent(request.url);
+    // Let these pages load without auth — the welcome modal handles the choice
+    if (
+      pathname === "/" ||
+      pathname === "/login" ||
+      pathname === "/register"
+    ) {
+      return NextResponse.next();
+    }
 
-    return NextResponse.redirect(
-      new URL(`/api/auth/guest?redirectUrl=${redirectUrl}`, request.url)
-    );
+    // Everything else (API routes, /chat/:id, etc.) → redirect to home
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   const isGuest = guestRegex.test(token?.email ?? "");
