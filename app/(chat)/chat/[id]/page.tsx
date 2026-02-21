@@ -4,6 +4,7 @@ import { Suspense } from "react";
 
 import { auth } from "@/app/(auth)/auth";
 import { Chat } from "@/components/chat";
+import { ChatSkeleton } from "@/components/chat-skeleton";
 import { DataStreamHandler } from "@/components/data-stream-handler";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
@@ -11,7 +12,7 @@ import { convertToUIMessages } from "@/lib/utils";
 
 export default function Page(props: { params: Promise<{ id: string }> }) {
   return (
-    <Suspense fallback={<div className="flex h-dvh" />}>
+    <Suspense fallback={<ChatSkeleton />}>
       <ChatPage params={props.params} />
     </Suspense>
   );
