@@ -15,10 +15,10 @@ type SuggestedActionsProps = {
 
 function PureSuggestedActions({ chatId, sendMessage }: SuggestedActionsProps) {
   const suggestedActions = [
-    "What are the advantages of using Next.js?",
-    "Write code to demonstrate Dijkstra's algorithm",
-    "Help me write an essay about Silicon Valley",
-    "What is the weather in San Francisco?",
+    "Build a strategy: Buy when RSI < 30, sell when RSI > 70 with 5% stop loss",
+    "What is ADX indicator?",
+    "Create a strategy using MACD and Bollinger Bands for HDFC Bank",
+    "Compare RSI vs MACD strategy",
   ];
 
   return (
