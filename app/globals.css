@@ -417,3 +417,32 @@
 .content-reveal {
   animation: content-reveal 0.35s ease-out both;
 }
+
+/* ── Welcome modal animations ── */
+@keyframes welcome-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.welcome-overlay {
+  animation: welcome-overlay-in 0.25s ease-out both;
+}
+
+.welcome-card {
+  animation: welcome-card-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
