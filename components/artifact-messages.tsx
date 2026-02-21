@@ -10,6 +10,7 @@ import { PreviewMessage, ThinkingMessage } from "./message";
 
 type ArtifactMessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   chatId: string;
   status: UseChatHelpers<ChatMessage>["status"];
   votes: Vote[] | undefined;
@@ -22,6 +23,7 @@ type ArtifactMessagesProps = {
 
 function PureArtifactMessages({
   addToolApprovalResponse,
+  sendMessage,
   chatId,
   status,
   votes,
@@ -57,6 +59,7 @@ function PureArtifactMessages({
           requiresScrollPadding={
             hasSentMessage && index === messages.length - 1
           }
+          sendMessage={sendMessage}
           setMessages={setMessages}
           vote={
             votes

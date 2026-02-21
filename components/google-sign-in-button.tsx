@@ -32,10 +32,15 @@ export function GoogleSignInButton() {
 
       router.refresh();
       router.push("/");
-    } catch (_error) {
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Unknown Firebase auth error";
+      console.error("Google sign-in failed:", error);
       toast({
         type: "error",
-        description: "Google sign-in failed. Check Firebase config and try again.",
+        description: `Google sign-in failed: ${message}`,
       });
     } finally {
       setIsLoading(false);

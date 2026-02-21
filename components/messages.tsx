@@ -9,6 +9,7 @@ import { PreviewMessage, ThinkingMessage } from "./message";
 
 type MessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   chatId: string;
   status: UseChatHelpers<ChatMessage>["status"];
   votes: Vote[] | undefined;
@@ -22,6 +23,7 @@ type MessagesProps = {
 
 function PureMessages({
   addToolApprovalResponse,
+  sendMessage,
   chatId,
   status,
   votes,
@@ -66,6 +68,7 @@ function PureMessages({
               requiresScrollPadding={
                 hasSentMessage && index === messages.length - 1
               }
+              sendMessage={sendMessage}
               setMessages={setMessages}
               vote={
                 votes

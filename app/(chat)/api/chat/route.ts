@@ -6,6 +6,7 @@ import {
   generateId,
   stepCountIs,
   streamText,
+  type UIMessageStreamWriter,
 } from "ai";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
@@ -37,8 +38,8 @@ import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 60;
-const RUST_REQUEST_TIMEOUT_MS = 25_000;
-const RUST_MAX_ATTEMPTS = 2;
+const RUST_REQUEST_TIMEOUT_MS = 50_000;
+const RUST_MAX_ATTEMPTS = 1;
 
 type RustChatRequest = {
   chat_id?: string;
@@ -56,6 +57,45 @@ type RustApiResponse = {
   error?: string | null;
   timestamp?: string;
 };
+
+type RustAnswerPayload = {
+  answer: string;
+  toolName?: string;
+};
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function streamChunkedText({
+  dataStream,
+  textId,
+  text,
+  chunkSize = 80,
+  delayMs = 10,
+}: {
+  dataStream: UIMessageStreamWriter<ChatMessage>;
+  textId: string;
+  text: string;
+  chunkSize?: number;
+  delayMs?: number;
+}) {
+  if (!text) {
+    return;
+  }
+
+  for (let i = 0; i < text.length; i += chunkSize) {
+    const chunk = text.slice(i, i + chunkSize);
+    dataStream.write({
+      type: "text-delta",
+      id: textId,
+      delta: chunk,
+    });
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+  }
+}
 
 function getStreamContext() {
   try {
@@ -87,30 +127,42 @@ function toRustChatMessages(messages: ChatMessage[]): RustChatRequest["messages"
   return normalized.slice(-24);
 }
 
-function extractRustAnswer(data: unknown): string {
+function extractRustAnswer(data: unknown): RustAnswerPayload {
   if (typeof data === "string") {
-    return data;
+    return { answer: data };
   }
 
   if (data && typeof data === "object") {
     const payload = data as Record<string, unknown>;
+    let toolName =
+      typeof payload.tool_name === "string" ? payload.tool_name : undefined;
+
+    const result = payload.result;
+    if (result && typeof result === "object") {
+      const resultPayload = result as Record<string, unknown>;
+      if (typeof resultPayload.tool_name === "string") {
+        toolName = resultPayload.tool_name;
+      } else if (typeof resultPayload.toolName === "string") {
+        toolName = resultPayload.toolName;
+      }
+    }
 
     if (typeof payload.answer === "string") {
-      return payload.answer;
+      return { answer: payload.answer, toolName };
     }
 
     if (typeof payload.message === "string") {
-      return payload.message;
+      return { answer: payload.message, toolName };
     }
 
     if (typeof payload.summary === "string") {
-      return payload.summary;
+      return { answer: payload.summary, toolName };
     }
 
-    return JSON.stringify(payload, null, 2);
+    return { answer: JSON.stringify(payload, null, 2), toolName };
   }
 
-  return "No response returned by Rust service.";
+  return { answer: "No response returned by Rust service." };
 }
 
 async function callRustChatService({
@@ -123,7 +175,7 @@ async function callRustChatService({
   messages: ChatMessage[];
   chatId: string;
   userId: string;
-}): Promise<string> {
+}): Promise<RustAnswerPayload> {
   const rustMessages = toRustChatMessages(messages);
 
   if (rustMessages.length === 0) {
@@ -173,7 +225,8 @@ async function callRustChatService({
         );
       }
 
-      return extractRustAnswer(payload.data);
+      const parsed = extractRustAnswer(payload.data);
+      return parsed;
     } catch (error) {
       lastError = error;
       if (attempt === RUST_MAX_ATTEMPTS) {
@@ -300,21 +353,63 @@ export async function POST(request: Request) {
           dataStream.write({
             type: "text-delta",
             id: textId,
-            delta: "Working on it...\n\n",
-          });
-
-          const rustAnswer = await callRustChatService({
-            rustApiUrl,
-            messages: uiMessages,
-            chatId: id,
-            userId: session.user.id,
+            delta:
+              "Processing request...\n\n" +
+              "```text\n" +
+              "[######....] Parsing intent\n" +
+              "[###.......] Selecting tool\n" +
+              "[..........] Running execution\n" +
+              "```\n\n",
           });
 
           dataStream.write({
             type: "text-delta",
             id: textId,
-            delta: rustAnswer,
+            delta:
+              "```text\n" +
+              "[##########] Request accepted\n" +
+              "[####......] Waiting for tool output\n" +
+              "[..........] Preparing response stream\n" +
+              "```\n\n",
           });
+
+          try {
+            const rustResponse = await callRustChatService({
+              rustApiUrl,
+              messages: uiMessages,
+              chatId: id,
+              userId: session.user.id,
+            });
+
+            if (rustResponse.toolName) {
+              await streamChunkedText({
+                dataStream,
+                textId,
+                text: `Using tool: \`${rustResponse.toolName}\`\n\n`,
+                chunkSize: 40,
+                delayMs: 8,
+              });
+            }
+
+            await streamChunkedText({
+              dataStream,
+              textId,
+              text: rustResponse.answer,
+              chunkSize: 120,
+              delayMs: 10,
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error
+                ? `Rust service error: ${error.message}`
+                : "Rust service error. Please retry.";
+
+            dataStream.write({
+              type: "text-delta",
+              id: textId,
+              delta: message,
+            });
+          }
           dataStream.write({
             type: "text-end",
             id: textId,

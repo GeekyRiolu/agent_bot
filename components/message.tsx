@@ -21,7 +21,79 @@ import { MessageActions } from "./message-actions";
 import { MessageEditor } from "./message-editor";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
+import { Skeleton } from "./ui/skeleton";
 import { Weather } from "./weather";
+
+function extractLastJsonCodeBlock(text: string): string | null {
+  const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
+  if (matches.length === 0) {
+    return null;
+  }
+  const last = matches[matches.length - 1]?.[1]?.trim();
+  return last || null;
+}
+
+function extractStrategyAstJson(message: ChatMessage): string | null {
+  if (message.role !== "assistant") {
+    return null;
+  }
+
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+
+  if (!text.includes("strategy_builder")) {
+    return null;
+  }
+
+  const candidate = extractLastJsonCodeBlock(text);
+  if (!candidate) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(candidate) as Record<string, unknown>;
+
+    // Full parse response: has ast.entry / ast.exit nested inside
+    const ast = parsed.ast as Record<string, unknown> | undefined;
+    if (
+      ast &&
+      typeof ast === "object" &&
+      (Array.isArray(ast.entry) || Array.isArray(ast.exit))
+    ) {
+      // Build the backtest-ready config from the full parse response
+      const config: Record<string, unknown> = { ast };
+      if (parsed.risk_params !== undefined) {
+        config.risk_params = parsed.risk_params;
+      }
+      if (parsed.date_config !== undefined) {
+        config.date_config = parsed.date_config;
+      }
+      if (parsed.date_conditions !== undefined) {
+        config.date_conditions = parsed.date_conditions;
+      }
+      if (parsed.exit_after_days !== undefined) {
+        config.exit_after_days = parsed.exit_after_days;
+      }
+      if (parsed.stocks !== undefined) {
+        config.stocks = parsed.stocks;
+      }
+      return JSON.stringify(config, null, 2);
+    }
+
+    // Legacy: top-level entry/exit (just the AST itself)
+    const hasAstShape =
+      (parsed.entry && Array.isArray(parsed.entry)) ||
+      (parsed.exit && Array.isArray(parsed.exit));
+    if (!hasAstShape) {
+      return null;
+    }
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return null;
+  }
+}
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -29,6 +101,7 @@ const PurePreviewMessage = ({
   message,
   vote,
   isLoading,
+  sendMessage,
   setMessages,
   regenerate,
   isReadonly,
@@ -39,12 +112,14 @@ const PurePreviewMessage = ({
   message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   regenerate: UseChatHelpers<ChatMessage>["regenerate"];
   isReadonly: boolean;
   requiresScrollPadding: boolean;
 }) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
+  const strategyAstJson = extractStrategyAstJson(message);
 
   const attachmentsFromMessage = message.parts.filter(
     (part) => part.type === "file"
@@ -345,6 +420,33 @@ const PurePreviewMessage = ({
             return null;
           })}
 
+          {!isReadonly && message.role === "assistant" && strategyAstJson && (
+            <div className="pt-1">
+              <button
+                className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={isLoading}
+                onClick={() => {
+                  sendMessage({
+                    role: "user",
+                    parts: [
+                      {
+                        type: "text",
+                        text:
+                          "Backtest this strategy AST using default values when optional config is missing.\n\n" +
+                          "```json\n" +
+                          strategyAstJson +
+                          "\n```",
+                      },
+                    ],
+                  });
+                }}
+                type="button"
+              >
+                Backtest Strategy
+              </button>
+            </div>
+          )}
+
           {!isReadonly && (
             <MessageActions
               chatId={chatId}
@@ -377,14 +479,12 @@ export const ThinkingMessage = () => {
           </div>
         </div>
 
-        <div className="flex w-full flex-col gap-2 md:gap-4">
-          <div className="flex items-center gap-1 p-0 text-muted-foreground text-sm">
-            <span className="animate-pulse">Thinking</span>
-            <span className="inline-flex">
-              <span className="animate-bounce [animation-delay:0ms]">.</span>
-              <span className="animate-bounce [animation-delay:150ms]">.</span>
-              <span className="animate-bounce [animation-delay:300ms]">.</span>
-            </span>
+        <div className="flex w-full max-w-2xl flex-col gap-3">
+          <div className="text-muted-foreground text-sm">Preparing response...</div>
+          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3">
+            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="h-3 w-3/5" />
           </div>
         </div>
       </div>
