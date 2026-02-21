@@ -344,6 +344,134 @@ POST
 /api/v1/backtest/run
 Run Backtest From Text
 
+Run backtest from natural language strategy text.
+
+This is a convenience endpoint that parses and runs in one call. For more control, use /strategy/parse first, then /backtest/run-config.
+
+Parameters
+Try it out
+No parameters
+
+Request body
+
+application/json
+Example Value
+Schema
+{
+  "end_date": "2025-01-01",
+  "initial_capital": 100000,
+  "start_date": "2024-01-01",
+  "stocks": [
+    "RELIANCE.NS"
+  ],
+  "strategy_text": "Buy when RSI < 30, sell when RSI > 70"
+}
+Responses
+Code	Description	Links
+200	
+Successful Response
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "data": {
+    "config_used": {
+      "ast": {
+        "entry": [
+          {
+            "left": "rsi(close,14)",
+            "operator": "<",
+            "right": 30
+          }
+        ],
+        "exit": [
+          {
+            "left": "rsi(close,14)",
+            "operator": ">",
+            "right": 70
+          }
+        ]
+      },
+      "date_conditions": [
+        {
+          "exclude": true,
+          "months": [
+            "march"
+          ],
+          "type": "month"
+        }
+      ],
+      "date_config": {
+        "end_date": "2025-01-01",
+        "start_date": "2024-01-01"
+      },
+      "stocks": [
+        "RELIANCE.NS"
+      ]
+    },
+    "results": {
+      "RELIANCE.NS": {
+        "equity_curve": [
+          {
+            "date": "2024-01-01",
+            "equity": 100000
+          }
+        ],
+        "metrics": {
+          "return_pct": 12.5,
+          "total_return": 25000,
+          "total_trades": 8,
+          "win_rate": 62.5
+        },
+        "stock": "RELIANCE.NS",
+        "success": true,
+        "trades": [
+          {
+            "entry_date": "2024-03-15",
+            "exit_date": "2024-04-20",
+            "pnl": 6800,
+            "pnl_pct": 6.94
+          }
+        ]
+      }
+    },
+    "summary": {
+      "execution_time": 2.3,
+      "failed": 0,
+      "successful": 1,
+      "total_stocks": 1
+    }
+  },
+  "success": true
+}
+No links
+422	
+Validation Error
+
+Media type
+
+application/json
+Example Value
+Schema
+{
+  "detail": [
+    {
+      "loc": [
+        "string",
+        0
+      ],
+      "msg": "string",
+      "type": "string",
+      "input": "string",
+      "ctx": {}
+    }
+  ]
+}
+No links
 
 POST
 /api/v1/backtest/run-config
@@ -355,6 +483,7 @@ Use this endpoint after parsing and letting user modify parameters. Frontend sen
 
 Parameters
 Try it out
+Reset
 No parameters
 
 Request body
@@ -368,43 +497,35 @@ Schema
       {
         "left": "rsi(close,14)",
         "operator": "<",
-        "right": 25
+        "right": 30
       }
     ],
     "exit": [
       {
         "left": "rsi(close,14)",
         "operator": ">",
-        "right": 75
+        "right": 70
       }
     ]
   },
-  "date_conditions": [
-    {
-      "exclude": true,
-      "months": [
-        "march"
-      ],
-      "type": "month"
-    },
-    {
-      "type": "skip_holiday"
-    }
-  ],
-  "date_config": {
-    "end_date": "2025-01-01",
-    "start_date": "2024-01-01"
-  },
-  "exit_after_days": 5,
   "risk_params": {
-    "initial_capital": 200000,
+    "initial_capital": 100000,
     "position_size": 15,
     "stop_loss": 5,
-    "take_profit": 20
+    "take_profit": 15
   },
+  "date_config": {
+    "is_relative": true,
+    "relative_value": "last_1_year"
+  },
+  "date_conditions": [
+    {
+      "month": "march",
+      "type": "month_event"
+    }
+  ],
   "stocks": [
-    "RELIANCE.NS",
-    "TCS.NS"
+    "ETERNAL.NS"
   ]
 }
 Responses

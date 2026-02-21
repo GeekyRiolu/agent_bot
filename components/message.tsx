@@ -29,11 +29,480 @@ function extractLastJsonCodeBlock(text: string): string | null {
   if (matches.length === 0) {
     return null;
   }
-  const last = matches[matches.length - 1]?.[1]?.trim();
+  const last = matches.at(-1)?.[1]?.trim();
   return last || null;
 }
 
-function extractStrategyAstJson(message: ChatMessage): string | null {
+/* ── Backtest result extraction & types ── */
+
+type BacktestMetrics = {
+  return_pct?: number;
+  total_return?: number;
+  total_trades?: number;
+  win_rate?: number;
+};
+
+type BacktestTrade = {
+  entry_date?: string;
+  exit_date?: string;
+  pnl?: number;
+  pnl_pct?: number;
+};
+
+type BacktestStockResult = {
+  stock: string;
+  success: boolean;
+  metrics?: BacktestMetrics;
+  trades?: BacktestTrade[];
+};
+
+type BacktestData = {
+  summary?: {
+    total_stocks?: number;
+    successful?: number;
+    failed?: number;
+    execution_time?: number;
+  };
+  results?: Record<string, BacktestStockResult>;
+};
+
+/**
+ * Extract backtest result data from a ```backtest-results code block
+ * embedded by the Rust backend.
+ */
+function extractBacktestData(text: string): BacktestData | null {
+  const match = text.match(/```backtest-results\s*([\s\S]*?)```/);
+  if (!match?.[1]) {
+    return null;
+  }
+  try {
+    return JSON.parse(match[1].trim()) as BacktestData;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove the ```backtest-results block from the text so it doesn't
+ * render as a raw code block in the markdown view.
+ */
+function stripBacktestDataBlock(text: string): string {
+  return text.replace(/```backtest-results\s*[\s\S]*?```/g, "").trim();
+}
+
+/* ── Backtest Result Table Component ── */
+
+function formatCurrency(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 10_000_000) {
+    return `₹${(value / 10_000_000).toFixed(2)}Cr`;
+  }
+  if (abs >= 100_000) {
+    return `₹${(value / 100_000).toFixed(2)}L`;
+  }
+  return `₹${value.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
+function PnlCell({ value, suffix }: { value?: number; suffix?: string }) {
+  if (value === undefined || value === null) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const isPositive = value > 0;
+  const isNeg = value < 0;
+  return (
+    <span
+      className={cn(
+        "font-medium",
+        isPositive && "text-emerald-600 dark:text-emerald-400",
+        isNeg && "text-red-500 dark:text-red-400"
+      )}
+    >
+      {isPositive ? "+" : ""}
+      {suffix === "%" ? `${value.toFixed(2)}%` : formatCurrency(value)}
+    </span>
+  );
+}
+
+function BacktestResultTable({ data }: { data: BacktestData }) {
+  const { summary, results } = data;
+  const stocks = results ? Object.entries(results) : [];
+
+  return (
+    <div className="my-3 space-y-4 text-sm">
+      {/* Summary bar */}
+      {summary && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 px-4 py-2.5">
+          <span className="font-semibold">Backtest Summary</span>
+          <span className="text-muted-foreground">•</span>
+          <span>
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">
+              {summary.successful ?? 0}
+            </span>
+            /{summary.total_stocks ?? 0} stocks successful
+          </span>
+          {(summary.failed ?? 0) > 0 && (
+            <>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-red-500">{summary.failed} failed</span>
+            </>
+          )}
+          <span className="text-muted-foreground">•</span>
+          <span className="text-muted-foreground">
+            {(summary.execution_time ?? 0).toFixed(2)}s
+          </span>
+        </div>
+      )}
+
+      {/* Per-stock metrics table */}
+      {stocks.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b bg-muted/40">
+                <th className="px-4 py-2.5 font-semibold">Stock</th>
+                <th className="px-4 py-2.5 text-right font-semibold">
+                  Return %
+                </th>
+                <th className="px-4 py-2.5 text-right font-semibold">
+                  Total Return
+                </th>
+                <th className="px-4 py-2.5 text-right font-semibold">Trades</th>
+                <th className="px-4 py-2.5 text-right font-semibold">
+                  Win Rate
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {stocks.map(([symbol, result]) => {
+                const m = result.metrics;
+                return (
+                  <tr
+                    className="border-b last:border-b-0 transition-colors hover:bg-muted/20"
+                    key={symbol}
+                  >
+                    <td className="px-4 py-2.5 font-medium">
+                      {symbol}
+                      {!result.success && (
+                        <span className="ml-1 text-red-500" title="Failed">
+                          ⚠️
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <PnlCell suffix="%" value={m?.return_pct} />
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <PnlCell value={m?.total_return} />
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium">
+                      {m?.total_trades ?? "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {m?.win_rate !== undefined ? (
+                        <span className="font-medium">
+                          {m.win_rate.toFixed(1)}%
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Per-stock trades */}
+      {stocks.map(([symbol, result]) => {
+        const trades = result.trades;
+        if (!trades || trades.length === 0) {
+          return null;
+        }
+        return (
+          <div key={`trades-${symbol}`}>
+            <h4 className="mb-1.5 font-semibold text-xs uppercase tracking-wide text-muted-foreground">
+              Trades — {symbol}
+            </h4>
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b bg-muted/40">
+                    <th className="px-3 py-2 font-semibold">#</th>
+                    <th className="px-3 py-2 font-semibold">Entry</th>
+                    <th className="px-3 py-2 font-semibold">Exit</th>
+                    <th className="px-3 py-2 text-right font-semibold">PnL</th>
+                    <th className="px-3 py-2 text-right font-semibold">
+                      PnL %
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trades.map((trade, i) => (
+                    <tr
+                      className="border-b last:border-b-0 transition-colors hover:bg-muted/20"
+                      key={`${symbol}-${trade.entry_date ?? "na"}-${trade.exit_date ?? "na"}`}
+                    >
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {i + 1}
+                      </td>
+                      <td className="px-3 py-2">{trade.entry_date ?? "—"}</td>
+                      <td className="px-3 py-2">{trade.exit_date ?? "—"}</td>
+                      <td className="px-3 py-2 text-right">
+                        <PnlCell value={trade.pnl} />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <PnlCell suffix="%" value={trade.pnl_pct} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Defaults from the /api/v1/backtest/run-config spec ── */
+const BACKTEST_DEFAULTS = {
+  initial_capital: 100_000,
+  position_size: 15,
+  stop_loss: 5,
+  take_profit: 15,
+  date_config: { start_date: "2024-01-01", end_date: "2025-01-01" } as Record<
+    string,
+    unknown
+  >,
+} as const;
+
+type StrategyBacktestPayload = {
+  /** Backtest-ready JSON string */
+  configJson: string;
+  /** Human-readable list of defaults that were filled in */
+  appliedDefaults: string[];
+};
+
+/**
+ * Clean an AST condition to only keep fields the backtest API expects:
+ * left, operator, right.
+ */
+function cleanCondition(
+  cond: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    left: cond.left,
+    operator: cond.operator,
+    right: cond.right,
+  };
+}
+
+/**
+ * Clean the AST to the backtest API format: only entry[] and exit[]
+ * with each condition having only left/operator/right.
+ */
+function cleanAst(ast: Record<string, unknown>): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+  if (Array.isArray(ast.entry)) {
+    cleaned.entry = (ast.entry as Record<string, unknown>[]).map(
+      cleanCondition
+    );
+  }
+  if (Array.isArray(ast.exit)) {
+    cleaned.exit = (ast.exit as Record<string, unknown>[]).map(cleanCondition);
+  }
+  return cleaned;
+}
+
+/**
+ * Map date_conditions from the parse/strategy_builder response format
+ * to the run-config format the backtest API expects.
+ *
+ * Strategy builder returns (various shapes):
+ *   { "type": "exclude_month", "months": ["march"] }
+ *   { "type": "skip_month", "month": "march" }
+ *
+ * Backtest run-config expects:
+ *   { "exclude": true, "months": ["march"], "type": "month" }
+ *   { "type": "skip_holiday" }  (passed through as-is)
+ */
+function mapDateCondition(
+  cond: Record<string, unknown>
+): Record<string, unknown> {
+  const srcType = typeof cond.type === "string" ? cond.type : "";
+
+  // exclude_month / skip_month / month_event → { exclude: true, months: [...], type: "month" }
+  if (
+    srcType === "exclude_month" ||
+    srcType === "skip_month" ||
+    srcType === "month_event"
+  ) {
+    // months may be an array already or a singular "month" string
+    let months: string[] = [];
+    if (Array.isArray(cond.months)) {
+      months = cond.months as string[];
+    } else if (typeof cond.month === "string") {
+      months = [cond.month];
+    }
+    return { exclude: true, months, type: "month" };
+  }
+
+  // skip_holiday and others → pass through as-is
+  return { ...cond };
+}
+
+/**
+ * Check whether date_config has meaningful explicit start/end dates.
+ * Only explicit date strings count — `is_relative` / `relative_value`
+ * are NOT forwarded to the backtest API.
+ */
+function hasRealDateConfig(srcDate: Record<string, unknown>): boolean {
+  const startDate = srcDate.start_date;
+  const endDate = srcDate.end_date;
+
+  return (
+    (typeof startDate === "string" && startDate.length > 0) ||
+    (typeof endDate === "string" && endDate.length > 0)
+  );
+}
+
+/**
+ * Build a backtest-ready config from the strategy parse response.
+ *
+ * Structure & field order strictly matches `/api/v1/backtest/run-config`:
+ *   ast → risk_params → date_config → date_conditions → stocks
+ *
+ * Null / missing fields are filled with defaults from the API spec.
+ * `appliedDefaults` lists every default that was used so the user
+ * can be prompted about them.
+ */
+function buildBacktestConfig(
+  parsed: Record<string, unknown>
+): StrategyBacktestPayload | null {
+  const ast = parsed.ast as Record<string, unknown> | undefined;
+  if (
+    !ast ||
+    typeof ast !== "object" ||
+    (!Array.isArray(ast.entry) && !Array.isArray(ast.exit))
+  ) {
+    return null;
+  }
+
+  const appliedDefaults: string[] = [];
+
+  // ── 1. ast ──
+  const config: Record<string, unknown> = {
+    ast: cleanAst(ast),
+  };
+
+  // ── 2. risk_params ──
+  const srcRisk =
+    parsed.risk_params && typeof parsed.risk_params === "object"
+      ? (parsed.risk_params as Record<string, unknown>)
+      : {};
+
+  const initialCapital =
+    typeof srcRisk.initial_capital === "number"
+      ? srcRisk.initial_capital
+      : null;
+  const positionSize =
+    typeof srcRisk.position_size === "number" ? srcRisk.position_size : null;
+  const stopLoss =
+    typeof srcRisk.stop_loss === "number" ? srcRisk.stop_loss : null;
+  const takeProfit =
+    typeof srcRisk.take_profit === "number" ? srcRisk.take_profit : null;
+
+  const riskParams: Record<string, number> = {
+    initial_capital:
+      initialCapital ??
+      (() => {
+        appliedDefaults.push(
+          `initial_capital = ${String(BACKTEST_DEFAULTS.initial_capital)}`
+        );
+        return BACKTEST_DEFAULTS.initial_capital;
+      })(),
+    position_size:
+      positionSize ??
+      (() => {
+        appliedDefaults.push(
+          `position_size = ${String(BACKTEST_DEFAULTS.position_size)}`
+        );
+        return BACKTEST_DEFAULTS.position_size;
+      })(),
+    stop_loss:
+      stopLoss ??
+      (() => {
+        appliedDefaults.push(
+          `stop_loss = ${String(BACKTEST_DEFAULTS.stop_loss)}`
+        );
+        return BACKTEST_DEFAULTS.stop_loss;
+      })(),
+    take_profit:
+      takeProfit ??
+      (() => {
+        appliedDefaults.push(
+          `take_profit = ${String(BACKTEST_DEFAULTS.take_profit)}`
+        );
+        return BACKTEST_DEFAULTS.take_profit;
+      })(),
+  };
+  config.risk_params = riskParams;
+
+  // ── 3. date_config ──
+  const srcDate =
+    parsed.date_config && typeof parsed.date_config === "object"
+      ? (parsed.date_config as Record<string, unknown>)
+      : {};
+
+  if (hasRealDateConfig(srcDate)) {
+    // User provided explicit start/end dates — only forward those
+    const dateConfig: Record<string, string> = {};
+    if (
+      typeof srcDate.start_date === "string" &&
+      srcDate.start_date.length > 0
+    ) {
+      dateConfig.start_date = srcDate.start_date;
+    }
+    if (typeof srcDate.end_date === "string" && srcDate.end_date.length > 0) {
+      dateConfig.end_date = srcDate.end_date;
+    }
+    config.date_config = dateConfig;
+  } else {
+    // No real date info — use default (never include is_relative / relative_value)
+    config.date_config = {
+      start_date: "2024-01-01",
+      end_date: "2025-01-01",
+    };
+    appliedDefaults.push("date_config = 2024-01-01 to 2025-01-01");
+  }
+
+  // ── 4. date_conditions ──
+  if (
+    Array.isArray(parsed.date_conditions) &&
+    parsed.date_conditions.length > 0
+  ) {
+    config.date_conditions = (
+      parsed.date_conditions as Record<string, unknown>[]
+    ).map(mapDateCondition);
+  }
+
+  // ── 5. stocks ──
+  if (Array.isArray(parsed.stocks) && parsed.stocks.length > 0) {
+    config.stocks = parsed.stocks;
+  }
+
+  return {
+    configJson: JSON.stringify(config, null, 2),
+    appliedDefaults,
+  };
+}
+
+function extractStrategyBacktestPayload(
+  message: ChatMessage
+): StrategyBacktestPayload | null {
   if (message.role !== "assistant") {
     return null;
   }
@@ -56,30 +525,9 @@ function extractStrategyAstJson(message: ChatMessage): string | null {
     const parsed = JSON.parse(candidate) as Record<string, unknown>;
 
     // Full parse response: has ast.entry / ast.exit nested inside
-    const ast = parsed.ast as Record<string, unknown> | undefined;
-    if (
-      ast &&
-      typeof ast === "object" &&
-      (Array.isArray(ast.entry) || Array.isArray(ast.exit))
-    ) {
-      // Build the backtest-ready config from the full parse response
-      const config: Record<string, unknown> = { ast };
-      if (parsed.risk_params !== undefined) {
-        config.risk_params = parsed.risk_params;
-      }
-      if (parsed.date_config !== undefined) {
-        config.date_config = parsed.date_config;
-      }
-      if (parsed.date_conditions !== undefined) {
-        config.date_conditions = parsed.date_conditions;
-      }
-      if (parsed.exit_after_days !== undefined) {
-        config.exit_after_days = parsed.exit_after_days;
-      }
-      if (parsed.stocks !== undefined) {
-        config.stocks = parsed.stocks;
-      }
-      return JSON.stringify(config, null, 2);
+    const payload = buildBacktestConfig(parsed);
+    if (payload) {
+      return payload;
     }
 
     // Legacy: top-level entry/exit (just the AST itself)
@@ -89,7 +537,10 @@ function extractStrategyAstJson(message: ChatMessage): string | null {
     if (!hasAstShape) {
       return null;
     }
-    return JSON.stringify(parsed, null, 2);
+    return {
+      configJson: JSON.stringify(parsed, null, 2),
+      appliedDefaults: [],
+    };
   } catch {
     return null;
   }
@@ -119,7 +570,7 @@ const PurePreviewMessage = ({
   requiresScrollPadding: boolean;
 }) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
-  const strategyAstJson = extractStrategyAstJson(message);
+  const strategyPayload = extractStrategyBacktestPayload(message);
 
   const attachmentsFromMessage = message.parts.filter(
     (part) => part.type === "file"
@@ -199,6 +650,14 @@ const PurePreviewMessage = ({
 
             if (type === "text") {
               if (mode === "view") {
+                const backtestData =
+                  message.role === "assistant"
+                    ? extractBacktestData(part.text)
+                    : null;
+                const displayText = backtestData
+                  ? stripBacktestDataBlock(part.text)
+                  : part.text;
+
                 return (
                   <div key={key}>
                     <MessageContent
@@ -215,8 +674,11 @@ const PurePreviewMessage = ({
                           : undefined
                       }
                     >
-                      <Response>{sanitizeText(part.text)}</Response>
+                      <Response>{sanitizeText(displayText)}</Response>
                     </MessageContent>
+                    {backtestData && (
+                      <BacktestResultTable data={backtestData} />
+                    )}
                   </div>
                 );
               }
@@ -420,21 +882,30 @@ const PurePreviewMessage = ({
             return null;
           })}
 
-          {!isReadonly && message.role === "assistant" && strategyAstJson && (
+          {!isReadonly && message.role === "assistant" && strategyPayload && (
             <div className="pt-1">
+              {strategyPayload.appliedDefaults.length > 0 && (
+                <p className="mb-1.5 text-muted-foreground text-xs">
+                  Defaults applied: {strategyPayload.appliedDefaults.join(", ")}
+                </p>
+              )}
               <button
                 className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={isLoading}
                 onClick={() => {
+                  const defaultsNote =
+                    strategyPayload.appliedDefaults.length > 0
+                      ? `\n\n**Defaults used:** ${strategyPayload.appliedDefaults.join(", ")}`
+                      : "";
                   sendMessage({
                     role: "user",
                     parts: [
                       {
                         type: "text",
                         text:
-                          "Backtest this strategy AST using default values when optional config is missing.\n\n" +
+                          `Run backtest with the following config.${defaultsNote}\n\n` +
                           "```json\n" +
-                          strategyAstJson +
+                          strategyPayload.configJson +
                           "\n```",
                       },
                     ],
@@ -480,7 +951,9 @@ export const ThinkingMessage = () => {
         </div>
 
         <div className="flex w-full max-w-2xl flex-col gap-3">
-          <div className="text-muted-foreground text-sm">Preparing response...</div>
+          <div className="text-muted-foreground text-sm">
+            Preparing response...
+          </div>
           <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3">
             <Skeleton className="h-3 w-2/3" />
             <Skeleton className="h-3 w-4/5" />
