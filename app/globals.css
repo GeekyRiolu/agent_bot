@@ -316,3 +316,104 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ── Response content fade-in ── */
+@keyframes response-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.response-appear {
+  animation: response-fade-in 0.3s ease-out both;
+}
+
+/* ── Backtest result stagger animation ── */
+@keyframes backtest-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.backtest-stagger > * {
+  opacity: 0;
+  animation: backtest-fade-in 0.4s ease-out forwards;
+}
+
+.backtest-stagger > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.backtest-stagger > *:nth-child(2) {
+  animation-delay: 120ms;
+}
+.backtest-stagger > *:nth-child(3) {
+  animation-delay: 240ms;
+}
+.backtest-stagger > *:nth-child(4) {
+  animation-delay: 360ms;
+}
+.backtest-stagger > *:nth-child(5) {
+  animation-delay: 480ms;
+}
+.backtest-stagger > *:nth-child(6) {
+  animation-delay: 600ms;
+}
+
+/* ── Universal skeleton shimmer ── */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 25%,
+    var(--accent) 50%,
+    var(--muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Legacy alias */
+.backtest-skeleton-row {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 25%,
+    var(--accent) 50%,
+    var(--muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+/* ── Content fade-in when skeleton resolves ── */
+@keyframes content-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.content-reveal {
+  animation: content-reveal 0.35s ease-out both;
+}

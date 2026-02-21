@@ -399,15 +399,24 @@ export async function POST(request: Request) {
               delayMs: 10,
             });
           } catch (error) {
-            const message =
-              error instanceof Error
-                ? `Rust service error: ${error.message}`
-                : "Rust service error. Please retry.";
+            // ChatSDKError stores the actual Rust detail in `cause`
+            // while `message` is a generic user-facing string.
+            // Surface the cause so the user can see what went wrong.
+            let detail: string;
+            if (error instanceof ChatSDKError) {
+              detail = typeof error.cause === "string" && error.cause.length > 0
+                ? error.cause
+                : error.message;
+            } else if (error instanceof Error) {
+              detail = error.message;
+            } else {
+              detail = "Unknown error. Please retry.";
+            }
 
             dataStream.write({
               type: "text-delta",
               id: textId,
-              delta: message,
+              delta: `Rust service error: ${detail}`,
             });
           }
           dataStream.write({

@@ -89,7 +89,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent align="end" className="hidden md:block">
-                      Delete All Chats.
+                      Delete All Chats
                     </TooltipContent>
                   </Tooltip>
                 )}

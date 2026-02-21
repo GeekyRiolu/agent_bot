@@ -21,7 +21,6 @@ import { MessageActions } from "./message-actions";
 import { MessageEditor } from "./message-editor";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
-import { Skeleton } from "./ui/skeleton";
 import { Weather } from "./weather";
 
 function extractLastJsonCodeBlock(text: string): string | null {
@@ -31,6 +30,162 @@ function extractLastJsonCodeBlock(text: string): string | null {
   }
   const last = matches.at(-1)?.[1]?.trim();
   return last || null;
+}
+
+/* ── Streaming phase detection ── */
+
+type StreamPhase = "progress" | "tool-selected" | "content" | "done";
+
+/**
+ * Determine the current streaming phase of an assistant message.
+ *
+ * - `progress`      – progress bars are showing, no tool line yet
+ * - `tool-selected` – "Using tool:" line arrived but real content hasn't
+ * - `content`       – actual response content is streaming in
+ * - `done`          – stream finished
+ */
+function getStreamingPhase(text: string, isStreaming: boolean): StreamPhase {
+  if (!isStreaming) {
+    return "done";
+  }
+
+  const hasProgress =
+    text.includes("Processing request") || /\[#{1,10}[.#]*\]/.test(text);
+
+  if (!hasProgress) {
+    // No progress bars → either content is streaming directly (AI model)
+    // or it's an empty start — treat as content
+    return "content";
+  }
+
+  const hasToolLine = text.includes("Using tool:");
+
+  // Strip progress indicators + tool line to see if real content exists
+  const stripped = text
+    .replace(/Processing request\.\.\.\n*/g, "")
+    .replace(/```text[\s\S]*?```\n*/g, "")
+    .replace(/Using tool:.*\n*/g, "")
+    .trim();
+
+  if (stripped.length > 50) {
+    return "content";
+  }
+  if (hasToolLine) {
+    return "tool-selected";
+  }
+  return "progress";
+}
+
+/**
+ * Extract the tool name from a "Using tool: `toolName`" line.
+ */
+function extractToolName(text: string): string | null {
+  const m = text.match(/Using tool:\s*`([^`]+)`/);
+  return m?.[1] ?? null;
+}
+
+/* ── Skeleton Components ── */
+
+/** Skeleton placeholder for the "Using tool:" line before it arrives */
+function ToolSelectionSkeleton() {
+  return (
+    <div className="mt-3 flex items-center gap-2 animate-in fade-in duration-150">
+      <span className="text-sm text-muted-foreground">Selecting tool</span>
+      <div className="h-5 w-32 rounded-md skeleton-shimmer" />
+    </div>
+  );
+}
+
+/** Generic skeleton placeholder for response content */
+function ResponseSkeleton() {
+  return (
+    <div className="mt-3 space-y-3 animate-in fade-in duration-150">
+      <div className="space-y-2.5 rounded-xl border border-border/40 bg-muted/10 p-4">
+        <div className="h-3.5 w-3/4 rounded-md skeleton-shimmer" />
+        <div
+          className="h-3.5 w-full rounded-md skeleton-shimmer"
+          style={{ animationDelay: "100ms" }}
+        />
+        <div
+          className="h-3.5 w-5/6 rounded-md skeleton-shimmer"
+          style={{ animationDelay: "200ms" }}
+        />
+        <div
+          className="h-3.5 w-2/3 rounded-md skeleton-shimmer"
+          style={{ animationDelay: "300ms" }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Skeleton placeholder that mimics a backtest result table */
+function BacktestSkeleton() {
+  return (
+    <div className="my-3 space-y-3 animate-in fade-in duration-150">
+      {/* Summary bar skeleton */}
+      <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-2.5">
+        <div className="h-4 w-32 rounded skeleton-shimmer" />
+        <div
+          className="h-4 w-24 rounded skeleton-shimmer"
+          style={{ animationDelay: "80ms" }}
+        />
+        <div
+          className="h-4 w-16 rounded skeleton-shimmer"
+          style={{ animationDelay: "160ms" }}
+        />
+      </div>
+      {/* Table skeleton */}
+      <div className="overflow-hidden rounded-lg border">
+        <div className="flex gap-6 border-b bg-muted/40 px-4 py-2.5">
+          <div className="h-4 w-24 rounded skeleton-shimmer" />
+          <div
+            className="h-4 w-16 rounded skeleton-shimmer"
+            style={{ animationDelay: "60ms" }}
+          />
+          <div
+            className="h-4 w-20 rounded skeleton-shimmer"
+            style={{ animationDelay: "120ms" }}
+          />
+          <div
+            className="h-4 w-14 rounded skeleton-shimmer"
+            style={{ animationDelay: "180ms" }}
+          />
+          <div
+            className="h-4 w-16 rounded skeleton-shimmer"
+            style={{ animationDelay: "240ms" }}
+          />
+        </div>
+        {[0, 1, 2].map((i) => (
+          <div
+            className="flex gap-6 border-b px-4 py-2.5 last:border-b-0"
+            key={`skel-row-${String(i)}`}
+          >
+            <div
+              className="h-4 w-28 rounded skeleton-shimmer"
+              style={{ animationDelay: `${300 + i * 80}ms` }}
+            />
+            <div
+              className="h-4 w-14 rounded skeleton-shimmer"
+              style={{ animationDelay: `${340 + i * 80}ms` }}
+            />
+            <div
+              className="h-4 w-16 rounded skeleton-shimmer"
+              style={{ animationDelay: `${380 + i * 80}ms` }}
+            />
+            <div
+              className="h-4 w-10 rounded skeleton-shimmer"
+              style={{ animationDelay: `${420 + i * 80}ms` }}
+            />
+            <div
+              className="h-4 w-12 rounded skeleton-shimmer"
+              style={{ animationDelay: `${460 + i * 80}ms` }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /* ── Backtest result extraction & types ── */
@@ -87,7 +242,10 @@ function extractBacktestData(text: string): BacktestData | null {
  * render as a raw code block in the markdown view.
  */
 function stripBacktestDataBlock(text: string): string {
-  return text.replace(/```backtest-results\s*[\s\S]*?```/g, "").trim();
+    return text
+      .replace(/###\s*Backtest Results[\s\S]*?```backtest-results\s*[\s\S]*?```/g, "")
+      .replace(/```backtest-results\s*[\s\S]*?```/g, "")
+      .trim();
 }
 
 /* ── Backtest Result Table Component ── */
@@ -650,34 +808,72 @@ const PurePreviewMessage = ({
 
             if (type === "text") {
               if (mode === "view") {
-                const backtestData =
-                  message.role === "assistant"
-                    ? extractBacktestData(part.text)
-                    : null;
+                const isAssistant = message.role === "assistant";
+                const backtestData = isAssistant
+                  ? extractBacktestData(part.text)
+                  : null;
                 const displayText = backtestData
                   ? stripBacktestDataBlock(part.text)
                   : part.text;
+
+                // Streaming phase detection
+                const phase = isAssistant
+                  ? getStreamingPhase(part.text, isLoading)
+                  : ("done" as StreamPhase);
+
+                const showToolSkeleton = phase === "progress";
+                const showResponseSkeleton =
+                  phase === "progress" || phase === "tool-selected";
+
+                // Determine if a backtest skeleton should be shown
+                // (tool-selected phase with backtester tool, or already
+                // streaming backtest content but table data not yet complete)
+                const toolName =
+                  phase === "tool-selected" ? extractToolName(part.text) : null;
+                const isBacktestIncoming = toolName === "backtester";
+                const isBacktestStreaming =
+                  isAssistant &&
+                  isLoading &&
+                  part.text.includes("### Backtest Results") &&
+                  !backtestData;
 
                 return (
                   <div key={key}>
                     <MessageContent
                       className={cn({
                         "wrap-break-word w-fit rounded-2xl px-3 py-2 text-right text-white":
-                          message.role === "user",
-                        "bg-transparent px-0 py-0 text-left":
-                          message.role === "assistant",
+                          !isAssistant,
+                        "bg-transparent px-0 py-0 text-left": isAssistant,
                       })}
                       data-testid="message-content"
                       style={
-                        message.role === "user"
+                        !isAssistant
                           ? { backgroundColor: "#006cff" }
                           : undefined
                       }
                     >
                       <Response>{sanitizeText(displayText)}</Response>
                     </MessageContent>
+
+                    {/* Tool selection skeleton */}
+                    {showToolSkeleton && <ToolSelectionSkeleton />}
+
+                    {/* Response / backtest skeleton while waiting */}
+                    {showResponseSkeleton &&
+                      (isBacktestIncoming ? (
+                        <BacktestSkeleton />
+                      ) : (
+                        <ResponseSkeleton />
+                      ))}
+
+                    {/* Backtest table streaming skeleton */}
+                    {isBacktestStreaming && <BacktestSkeleton />}
+
+                    {/* Final backtest table with stagger animation */}
                     {backtestData && (
-                      <BacktestResultTable data={backtestData} />
+                      <div className="backtest-stagger">
+                        <BacktestResultTable data={backtestData} />
+                      </div>
                     )}
                   </div>
                 );
@@ -882,6 +1078,13 @@ const PurePreviewMessage = ({
             return null;
           })}
 
+          {/* Fallback skeleton when assistant is loading but no text parts yet */}
+          {isLoading &&
+            message.role === "assistant" &&
+            !message.parts?.some(
+              (p) => p.type === "text" && p.text?.trim()
+            ) && <ResponseSkeleton />}
+
           {!isReadonly && message.role === "assistant" && strategyPayload && (
             <div className="pt-1">
               {strategyPayload.appliedDefaults.length > 0 && (
@@ -939,7 +1142,7 @@ export const PreviewMessage = PurePreviewMessage;
 export const ThinkingMessage = () => {
   return (
     <div
-      className="group/message fade-in w-full animate-in duration-300"
+      className="group/message fade-in w-full animate-in duration-150"
       data-role="assistant"
       data-testid="message-assistant-loading"
     >
@@ -950,14 +1153,24 @@ export const ThinkingMessage = () => {
           </div>
         </div>
 
-        <div className="flex w-full max-w-2xl flex-col gap-3">
+        <div className="flex w-full max-w-2xl flex-col gap-2">
           <div className="text-muted-foreground text-sm">
             Preparing response...
           </div>
-          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3">
-            <Skeleton className="h-3 w-2/3" />
-            <Skeleton className="h-3 w-4/5" />
-            <Skeleton className="h-3 w-3/5" />
+          <div className="space-y-2.5 rounded-xl border border-border/40 bg-muted/10 p-4">
+            <div className="h-3.5 w-3/4 rounded-md skeleton-shimmer" />
+            <div
+              className="h-3.5 w-full rounded-md skeleton-shimmer"
+              style={{ animationDelay: "100ms" }}
+            />
+            <div
+              className="h-3.5 w-5/6 rounded-md skeleton-shimmer"
+              style={{ animationDelay: "200ms" }}
+            />
+            <div
+              className="h-3.5 w-2/3 rounded-md skeleton-shimmer"
+              style={{ animationDelay: "300ms" }}
+            />
           </div>
         </div>
       </div>
