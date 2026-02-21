@@ -15,9 +15,9 @@ type SuggestedActionsProps = {
 
 function PureSuggestedActions({ chatId, sendMessage }: SuggestedActionsProps) {
   const suggestedActions = [
-    "Build a strategy: Buy when RSI < 30, sell when RSI > 70 with 5% stop loss",
+    "Build a strategy: Buy when RSI > 30, for Reliance stock",
     "What is ADX indicator?",
-    "Create a strategy using MACD and Bollinger Bands for HDFC Bank",
+    "Technical analysis vs Fundamental analysis",
     "Compare RSI vs MACD strategy",
   ];
 
