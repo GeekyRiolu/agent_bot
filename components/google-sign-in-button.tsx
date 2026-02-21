@@ -1,6 +1,6 @@
 "use client";
 
-import { signIn } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
@@ -10,6 +10,7 @@ import { getFirebaseClientAuth } from "@/lib/auth/firebase-client";
 
 export function GoogleSignInButton() {
   const router = useRouter();
+  const { update: updateSession } = useSession();
   const [isLoading, setIsLoading] = useState(false);
 
   const handleGoogleSignIn = async () => {
@@ -30,6 +31,8 @@ export function GoogleSignInButton() {
         throw new Error(result.error);
       }
 
+      // Refresh client-side session so useSession() picks up the new user
+      await updateSession();
       router.refresh();
       router.push("/");
     } catch (error) {

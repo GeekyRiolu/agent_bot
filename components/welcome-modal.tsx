@@ -21,6 +21,14 @@ export function WelcomeModal() {
     }
 
     const isGuest = guestRegex.test(session?.user?.email ?? "");
+
+    // User signed in (no longer a guest) → close immediately & remember
+    if (!isGuest) {
+      localStorage.setItem(DISMISSED_KEY, "true");
+      setOpen(false);
+      return;
+    }
+
     const dismissed = localStorage.getItem(DISMISSED_KEY);
 
     if (isGuest && !dismissed) {
@@ -47,10 +55,10 @@ export function WelcomeModal() {
   return (
     <div className="welcome-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
-        className="welcome-card relative mx-4 flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-border/60 bg-background shadow-2xl"
-        role="dialog"
         aria-label="Welcome"
         aria-modal="true"
+        className="welcome-card relative mx-4 flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-border/60 bg-background shadow-2xl"
+        role="dialog"
       >
         {/* Decorative gradient header */}
         <div className="relative flex flex-col items-center gap-3 bg-gradient-to-b from-primary/8 to-transparent px-8 pt-10 pb-6">
